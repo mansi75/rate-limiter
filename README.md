@@ -1,8 +1,8 @@
 # Rate Limiter
 
-[![Maven Central](https://img.shields.io/maven-central/v/io.github.mansi/rate-limiter?style=flat-square)](https://central.sonatype.com/artifact/io.github.mansi/rate-limiter)
+[![Maven Central](https://img.shields.io/maven-central/v/com.ratelimit/rate-limiter?style=flat-square)](https://central.sonatype.com/artifact/com.ratelimit/rate-limiter)
 [![CI](https://img.shields.io/github/actions/workflow/status/mansi/rate-limiter/ci.yml?branch=main&style=flat-square)](https://github.com/mansi/rate-limiter/actions)
-[![javadoc](https://img.shields.io/badge/javadoc-latest-blue?style=flat-square)](https://javadoc.io/doc/io.github.mansi/rate-limiter)
+[![javadoc](https://img.shields.io/badge/javadoc-latest-blue?style=flat-square)](https://javadoc.io/doc/com.ratelimit/rate-limiter)
 [![License](https://img.shields.io/github/license/mansi/rate-limiter?style=flat-square)](LICENSE)
 
 Six rate limiting algorithms behind one interface, with no runtime dependencies and no background threads.
@@ -22,6 +22,7 @@ if (limiter.isAllowed("user:42")) {
 - [Getting Started](#-getting-started)
   * [Gradle](#gradle)
   * [Maven](#maven)
+  * [Packages](#packages)
 - [Usage](#-usage)
   * [Basic](#basic)
   * [Reading the result](#reading-the-result)
@@ -58,7 +59,7 @@ if (limiter.isAllowed("user:42")) {
 
 ```kotlin
 dependencies {
-    implementation("io.github.mansi:rate-limiter:0.1.0")
+    implementation("com.ratelimit:rate-limiter:0.1.0")
 }
 ```
 
@@ -66,7 +67,7 @@ dependencies {
 
 ```xml
 <dependency>
-    <groupId>io.github.mansi</groupId>
+    <groupId>com.ratelimit</groupId>
     <artifactId>rate-limiter</artifactId>
     <version>0.1.0</version>
 </dependency>
@@ -74,13 +75,32 @@ dependencies {
 
 Requires Java 17 or later.
 
+### Packages
+
+Everything you need day to day is in `com.ratelimit`. The rest is split by role, so an import
+tells you what kind of thing you are looking at:
+
+| Package | What lives there |
+| --- | --- |
+| `com.ratelimit` | `RateLimiter`, `RateLimiters`, `RateLimitResult`, `RateLimitExceededException` |
+| `com.ratelimit.rule` | `KeyMatcher`, `Rule` — routing keys to different limits |
+| `com.ratelimit.time` | `TimeSource`, `MutableTimeSource` — the injectable clock |
+| `com.ratelimit.store` | `LimiterStore`, `InMemoryStore`, `EvictionPolicy`, `StateMutation` |
+| `com.ratelimit.listener` | `RateLimitListener`, `CompositeListener` |
+| `com.ratelimit.builder` | the builders `RateLimiters` hands back |
+| `com.ratelimit.algorithm` | the algorithm implementations themselves |
+| `com.ratelimit.state` | per-key state, of interest only when writing a store |
+
+You reach `com.ratelimit.builder` through `RateLimiters`, not by importing it — the factory
+methods return the right builder and the chain flows from there.
+
 ## 🔨 Usage
 
 ### Basic
 
 ```java
-import io.github.mansi.ratelimit.RateLimiter;
-import io.github.mansi.ratelimit.RateLimiters;
+import com.ratelimit.RateLimiter;
+import com.ratelimit.RateLimiters;
 
 RateLimiter limiter = RateLimiters.tokenBucket()
         .capacity(100)
@@ -130,6 +150,8 @@ The composite checks every delegate before committing to any, so a request refus
 ### Different limits per key
 
 ```java
+import com.ratelimit.rule.KeyMatcher;
+
 RateLimiter limiter = RateLimiters.rules()
         .when(KeyMatcher.prefix("internal:")).unlimited()
         .when(KeyMatcher.prefix("premium:")).use(generousLimiter)
@@ -166,21 +188,21 @@ Every builder accepts the three options below, plus its own.
 
 ### `store`
 
-Type: `LimiterStore`
+Type: `com.ratelimit.store.LimiterStore`
 Default: `InMemoryStore.withDefaults()`
 
 Where per-key state lives. See [Stores](#-stores).
 
 ### `timeSource`
 
-Type: `TimeSource`
+Type: `com.ratelimit.time.TimeSource`
 Default: `TimeSource.system()`
 
 The clock. Pass a `MutableTimeSource` in tests. Deliberately not `java.time.Clock` — see [Testing](#-testing).
 
 ### `listener`
 
-Type: `RateLimitListener`
+Type: `com.ratelimit.listener.RateLimitListener`
 Default: `RateLimitListener.NOOP`
 
 Notified of every decision. See [Listeners](#-listeners).
@@ -331,6 +353,8 @@ Discards all state for a key, as if it had never been seen.
 ## 🖱 Listeners
 
 ```java
+import com.ratelimit.listener.RateLimitListener;
+
 RateLimiter limiter = RateLimiters.tokenBucket()
         .capacity(100)
         .refill(10, Duration.ofSeconds(1))
@@ -361,6 +385,8 @@ Every method has a default no-op body, so implement only what you need. Callback
 
 ### `RateLimitResult`
 
+`com.ratelimit.RateLimitResult`
+
 ```java
 record RateLimitResult(
     boolean  allowed,      // whether permits were granted
@@ -374,6 +400,8 @@ record RateLimitResult(
 
 ### `KeyMatcher`
 
+`com.ratelimit.rule.KeyMatcher`
+
 Extends `Predicate<String>`, so `and`, `or`, and `negate` work for free.
 
 ```java
@@ -385,17 +413,23 @@ KeyMatcher.any()
 
 ### `EvictionPolicy`
 
+`com.ratelimit.store.EvictionPolicy`
+
 `LEAST_RECENTLY_USED` · `LEAST_FREQUENTLY_USED` · `NONE`
 
 ### `RateLimitExceededException`
+
+`com.ratelimit.RateLimitExceededException`
 
 Unchecked. Carries `key()` and `result()`.
 
 ## 💾 Stores
 
-State lives behind one interface:
+State lives behind one interface, `com.ratelimit.store.LimiterStore`:
 
 ```java
+package com.ratelimit.store;
+
 public interface LimiterStore {
     <S extends LimiterState> RateLimitResult compute(
             String key,
@@ -415,6 +449,9 @@ There is no `get` and no `put`, on purpose. A rate limiting decision is a read-m
 `InMemoryStore` implements it with `ConcurrentHashMap.compute`, which holds the bin lock across the whole remapping function — per-key exclusion with no lock table and no global lock.
 
 ```java
+import com.ratelimit.store.EvictionPolicy;
+import com.ratelimit.store.InMemoryStore;
+
 RateLimiters.tokenBucket()
         .capacity(100)
         .refill(10, Duration.ofSeconds(1))
@@ -437,6 +474,8 @@ A distributed store cannot satisfy the atomicity requirement with client-side lo
 The clock is injectable, so tests never sleep:
 
 ```java
+import com.ratelimit.time.MutableTimeSource;
+
 MutableTimeSource time = new MutableTimeSource();
 
 RateLimiter limiter = RateLimiters.tokenBucket()
