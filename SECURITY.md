@@ -12,7 +12,7 @@ While the project is pre-1.0, fixes land on the latest minor version only.
 
 Please do not open a public issue.
 
-Report privately through [GitHub Security Advisories](https://github.com/mansi/rate-limiter/security/advisories/new). You should get an acknowledgement within a few days, and an assessment within two weeks.
+Report privately through [GitHub Security Advisories](https://github.com/mansi75/rate-limiter/security/advisories/new). You should get an acknowledgement within a few days, and an assessment within two weeks.
 
 Useful things to include: the affected version, the limiter configuration, and a reproduction — a `MutableTimeSource`-based test is ideal.
 

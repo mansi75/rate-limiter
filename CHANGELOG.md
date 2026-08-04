@@ -31,5 +31,5 @@ First release.
 - No runtime dependencies, and no background threads: state refills lazily from elapsed time.
 - Requires Java 17 or later.
 
-[Unreleased]: https://github.com/mansi/rate-limiter/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/mansi/rate-limiter/releases/tag/v0.1.0
+[Unreleased]: https://github.com/mansi75/rate-limiter/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/mansi75/rate-limiter/releases/tag/v0.1.0

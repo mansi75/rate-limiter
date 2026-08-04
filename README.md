@@ -1,9 +1,20 @@
 # Rate Limiter
 
-[![Maven Central](https://img.shields.io/maven-central/v/com.ratelimit/rate-limiter?style=flat-square)](https://central.sonatype.com/artifact/com.ratelimit/rate-limiter)
-[![CI](https://img.shields.io/github/actions/workflow/status/mansi/rate-limiter/ci.yml?branch=main&style=flat-square)](https://github.com/mansi/rate-limiter/actions)
-[![javadoc](https://img.shields.io/badge/javadoc-latest-blue?style=flat-square)](https://javadoc.io/doc/com.ratelimit/rate-limiter)
-[![License](https://img.shields.io/github/license/mansi/rate-limiter?style=flat-square)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/mansi75/rate-limiter/ci.yml?branch=master&style=flat-square)](https://github.com/mansi75/rate-limiter/actions)
+[![License](https://img.shields.io/github/license/mansi75/rate-limiter?style=flat-square)](LICENSE)
+[![Java](https://img.shields.io/badge/Java-17%2B-blue?style=flat-square)](#-getting-started)
+[![Status](https://img.shields.io/badge/status-pre--release-orange?style=flat-square)](CHANGELOG.md)
+
+<!--
+The Maven Central and javadoc.io badges are held back until the first release, because both
+query a registry that has never heard of this artifact and would render "not found" on the
+front page. Restore them with the line below once 0.1.0 is published:
+
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.mansi75/rate-limiter?style=flat-square)](https://central.sonatype.com/artifact/io.github.mansi75/rate-limiter)
+[![javadoc](https://javadoc.io/badge2/io.github.mansi75/rate-limiter/javadoc.svg?style=flat-square)](https://javadoc.io/doc/io.github.mansi75/rate-limiter)
+-->
+
+> **Pre-release.** Not yet on Maven Central. See [Getting Started](#-getting-started) to build from source.
 
 Six rate limiting algorithms behind one interface, with no runtime dependencies and no background threads.
 
@@ -59,7 +70,7 @@ if (limiter.isAllowed("user:42")) {
 
 ```kotlin
 dependencies {
-    implementation("com.ratelimit:rate-limiter:0.1.0")
+    implementation("io.github.mansi75:rate-limiter:0.1.0")
 }
 ```
 
@@ -67,13 +78,27 @@ dependencies {
 
 ```xml
 <dependency>
-    <groupId>com.ratelimit</groupId>
+    <groupId>io.github.mansi75</groupId>
     <artifactId>rate-limiter</artifactId>
     <version>0.1.0</version>
 </dependency>
 ```
 
 Requires Java 17 or later.
+
+Until 0.1.0 is on Maven Central, build and install it locally instead:
+
+```bash
+git clone https://github.com/mansi75/rate-limiter.git
+cd rate-limiter
+./gradlew publishToMavenLocal
+```
+
+then add `mavenLocal()` to your repositories.
+
+Note that the coordinates are `io.github.mansi75` while the Java package is `com.ratelimit`.
+Maven Central grants a groupId only on proof you control the matching domain, so the two
+differ on purpose; nothing about your imports changes.
 
 ### Packages
 
@@ -502,15 +527,15 @@ assertThat(limiter.isAllowed("k")).isTrue();
 
 ## 🐛 Bug Reporting
 
-Please [open an issue](https://github.com/mansi/rate-limiter/issues) with the algorithm, the configuration, and a failing case if you have one.
+Please [open an issue](https://github.com/mansi75/rate-limiter/issues) with the algorithm, the configuration, and a failing case if you have one.
 
 ## ⭐ Feature Request
 
-[Open an issue](https://github.com/mansi/rate-limiter/issues) describing what you are trying to limit and why the current options do not express it.
+[Open an issue](https://github.com/mansi75/rate-limiter/issues) describing what you are trying to limit and why the current options do not express it.
 
 ## 📋 Release Notes
 
-See [Releases](https://github.com/mansi/rate-limiter/releases).
+See [Releases](https://github.com/mansi75/rate-limiter/releases).
 
 ## 📜 License
 

@@ -3,10 +3,10 @@ plugins {
     `maven-publish`
 }
 
-// Matches the Java package, and the coordinates the README tells people to depend on.
-// Publishing this groupId to Maven Central requires proving ownership of ratelimit.com;
-// if that is not on the cards, switch both this and the README to io.github.<user>.
-group = "com.ratelimit"
+// Deliberately not `com.ratelimit`, which is the Java package: Maven Central grants a groupId
+// only on proof you control the matching domain, and io.github.<user> is the route that needs
+// no domain purchase. Coordinates and package need not match, and here they do not.
+group = "io.github.mansi75"
 version = "0.1.0"
 
 repositories {
@@ -58,7 +58,7 @@ publishing {
                 name = "rate-limiter"
                 description = "Six rate limiting algorithms behind one interface, " +
                     "with no runtime dependencies and no background threads."
-                url = "https://github.com/mansi/rate-limiter"
+                url = "https://github.com/mansi75/rate-limiter"
                 licenses {
                     license {
                         name = "MIT License"
@@ -66,8 +66,8 @@ publishing {
                     }
                 }
                 scm {
-                    url = "https://github.com/mansi/rate-limiter"
-                    connection = "scm:git:https://github.com/mansi/rate-limiter.git"
+                    url = "https://github.com/mansi75/rate-limiter"
+                    connection = "scm:git:https://github.com/mansi75/rate-limiter.git"
                 }
             }
         }
