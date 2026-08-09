@@ -199,13 +199,17 @@ Sleeps for exactly as long as the algorithm says is needed, re-checks, and gives
 | Algorithm | State per key | Accuracy | Bursts | Use when |
 | --- | --- | --- | --- | --- |
 | `tokenBucket()` | 2 longs | exact | allowed up to capacity | default choice; bursts are harmless |
-| `leakyBucket()` | 2 longs | exact | refused | downstream needs a steady rate |
-| `fixedWindow()` | 2 longs | **permits 2× at boundaries** | at boundaries | only when its cheapness outweighs its inaccuracy |
+| `leakyBucket()` | 2 longs | exact | up to queue depth, then paced | downstream needs a steady rate |
+| `fixedWindow()` | 3 longs | **permits 2× at boundaries** | at boundaries | only when its cheapness outweighs its inaccuracy |
 | `slidingWindowLog()` | O(limit) longs | exact | none | small limits where precision matters |
 | `slidingWindowCounter()` | 3 longs | approximate, bounded error | none | best default of the window algorithms |
 | `gcra()` | 1 long | exact | configurable | cheapest; what most production limiters run |
 
-`fixedWindow()` is included deliberately. It is the most commonly implemented rate limiter and it permits twice the configured limit across a window boundary — 100 requests at 11:00:59 and 100 more at 11:01:00. `FixedWindowBoundaryTest` drives exactly that scenario and asserts the over-grant, then runs it through `slidingWindowCounter()` and asserts the refusal.
+`fixedWindow()` is included deliberately. It is the most commonly implemented rate limiter and it permits twice the configured limit across a window boundary — 100 requests at 11:00:59 and 100 more at 11:01:00. `FixedWindowBoundaryTest` drives exactly that scenario and asserts the over-grant, then runs the identical traffic through `tokenBucket()` and asserts it is refused. `SlidingWindowCounterLimiterTest` asserts the same refusal for the window algorithm that fixes it.
+
+`leakyBucket()` sets `capacity` as queue depth rather than burst size, so a burst up to that depth is admitted and then drained at the leak rate. Set `capacity(1)` for output with no burst at all.
+
+`fixedWindow()` shares its state type with `slidingWindowCounter()` and leaves one of the three counters unused; the memory is the same either way, which is another reason to prefer the counter.
 
 ## ⚙️ Options
 
@@ -421,7 +425,7 @@ record RateLimitResult(
 )
 ```
 
-`asHeaders()` renders it as `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and — on rejection only — `Retry-After` in whole seconds rounded up, so a client that waits exactly that long will succeed.
+`asHeaders()` renders it as `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and — on rejection only — `Retry-After` in whole seconds rounded up, so a client that waits exactly that long will succeed. The header is never `0`: a sub-second delay still renders as `1`, and so does the zero delay returned for a request larger than the limit, because a client told to retry immediately would spin. Read `retryAfter()` itself to tell those apart — it is exact, and `Duration.ZERO` means no amount of waiting will help.
 
 ### `KeyMatcher`
 
