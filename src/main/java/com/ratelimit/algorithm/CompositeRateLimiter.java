@@ -6,6 +6,7 @@ import com.ratelimit.RateLimiter;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Applies several limiters at once. All must permit for the request to proceed.
@@ -69,24 +70,76 @@ final class CompositeRateLimiter implements RateLimiter {
             return worstRefusal;
         }
 
-        // Phase two: commit.
-        throw new UnsupportedOperationException(
-                "TODO: acquire from every delegate, tracking the tightest remaining count; "
-                        + "if one refuses despite the peek pass, return its result");
+        // Phase two: commit. Every delegate said yes a moment ago.
+        RateLimitResult tightest = null;
+        for (RateLimiter delegate : delegates) {
+            RateLimitResult result = delegate.tryAcquire(key, permits);
+            if (!result.allowed()) {
+                // Lost the race described above: a concurrent caller took the permit
+                // between the two passes. Return the refusal rather than unwinding the
+                // delegates already charged, which errs towards enforcing the limit.
+                return result;
+            }
+            tightest = tighter(tightest, result);
+        }
+        return tightest;
     }
 
     @Override
     public RateLimitResult peek(String key, int permits) {
-        throw new UnsupportedOperationException(
-                "TODO: peek every delegate, return the most constraining result");
+        RateLimitResult worstRefusal = null;
+        RateLimitResult tightest = null;
+        for (RateLimiter delegate : delegates) {
+            RateLimitResult peeked = delegate.peek(key, permits);
+            if (!peeked.allowed()) {
+                if (isWorse(peeked, worstRefusal)) {
+                    worstRefusal = peeked;
+                }
+            } else {
+                tightest = tighter(tightest, peeked);
+            }
+        }
+        return worstRefusal != null ? worstRefusal : tightest;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Mirrors {@code AbstractRateLimiter.acquire}, but measures the deadline
+     * against {@link System#nanoTime()} rather than an injected time source: a
+     * composite owns no clock, and its delegates may each hold a different one.
+     */
     @Override
     public RateLimitResult acquire(String key, int permits, Duration timeout)
             throws InterruptedException {
-        throw new UnsupportedOperationException(
-                "TODO: loop on tryAcquire, sleeping for the reported retryAfter, until the "
-                        + "timeout elapses; mirror AbstractRateLimiter.acquire");
+
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(timeout, "timeout");
+        if (permits <= 0) {
+            throw new IllegalArgumentException("permits must be positive: " + permits);
+        }
+        if (timeout.isNegative()) {
+            throw new IllegalArgumentException("timeout must not be negative: " + timeout);
+        }
+
+        long deadlineNanos = System.nanoTime() + timeout.toNanos();
+
+        while (true) {
+            RateLimitResult result = tryAcquire(key, permits);
+            if (result.allowed()) {
+                return result;
+            }
+            if (result.retryAfter().isZero()) {
+                // Unsatisfiable for any amount of waiting, e.g. more permits than some
+                // delegate's capacity. Sleeping would never help.
+                return result;
+            }
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                return result;
+            }
+            TimeUnit.NANOSECONDS.sleep(Math.min(result.retryAfter().toNanos(), remainingNanos));
+        }
     }
 
     @Override
@@ -98,5 +151,16 @@ final class CompositeRateLimiter implements RateLimiter {
     private static boolean isWorse(RateLimitResult candidate, RateLimitResult incumbent) {
         return incumbent == null
                 || candidate.retryAfter().compareTo(incumbent.retryAfter()) > 0;
+    }
+
+    /**
+     * @return whichever result leaves the caller less headroom, so that a reported
+     *         {@code X-RateLimit-Remaining} never promises more requests than the
+     *         strictest delegate would actually permit
+     */
+    private static RateLimitResult tighter(RateLimitResult incumbent, RateLimitResult candidate) {
+        return (incumbent == null || candidate.remaining() < incumbent.remaining())
+                ? candidate
+                : incumbent;
     }
 }

@@ -95,10 +95,47 @@ final class GcraLimiter extends AbstractRateLimiter {
     }
 
     private RateLimitResult acquireMutation(GcraState state, long nowNanos, int permits) {
-        throw new UnsupportedOperationException("TODO: see the class JavaDoc for the algorithm");
+        return decide(state, nowNanos, permits, true);
     }
 
     private RateLimitResult peekMutation(GcraState state, long nowNanos, int permits) {
-        throw new UnsupportedOperationException("TODO: see the class JavaDoc for the algorithm");
+        return decide(state, nowNanos, permits, false);
+    }
+
+    /**
+     * The algorithm. Acquire and peek differ by a single assignment, so they share
+     * the arithmetic rather than restating a formula that is easy to get subtly
+     * wrong in one copy and not the other.
+     *
+     * @param commit whether a conforming request should advance the arrival time
+     */
+    private RateLimitResult decide(GcraState state, long nowNanos, int permits, boolean commit) {
+        long incrementNanos = permits * emissionIntervalNanos;
+        // A caller that has been idle is caught up, never ahead: clamping to now is
+        // what stops unused time accumulating into an unbounded burst.
+        long arrivalNanos = Math.max(state.tatNanos, nowNanos);
+        long updatedArrivalNanos = arrivalNanos + incrementNanos;
+        long allowAtNanos = updatedArrivalNanos - delayToleranceNanos;
+
+        if (allowAtNanos > nowNanos) {
+            // Too far ahead of schedule. The gap is exactly the wait, with no estimate.
+            return RateLimitResult.rejected(limit, Duration.ofNanos(allowAtNanos - nowNanos));
+        }
+        if (commit) {
+            state.tatNanos = updatedArrivalNanos;
+        }
+        return RateLimitResult.allowed(limit, remainingAt(updatedArrivalNanos, nowNanos));
+    }
+
+    /**
+     * How many further permits the tolerance would still cover, derived from the
+     * arrival time rather than counted.
+     */
+    private long remainingAt(long arrivalNanos, long nowNanos) {
+        long slackNanos = nowNanos - (arrivalNanos - delayToleranceNanos);
+        if (slackNanos <= 0) {
+            return 0L;
+        }
+        return Math.min(limit, slackNanos / emissionIntervalNanos);
     }
 }

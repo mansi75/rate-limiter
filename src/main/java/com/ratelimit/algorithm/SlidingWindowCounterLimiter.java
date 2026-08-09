@@ -7,6 +7,7 @@ import com.ratelimit.store.LimiterStore;
 import com.ratelimit.store.StateMutation;
 import com.ratelimit.time.TimeSource;
 
+import java.math.BigInteger;
 import java.time.Duration;
 import java.util.function.LongFunction;
 
@@ -90,10 +91,161 @@ final class SlidingWindowCounterLimiter extends AbstractRateLimiter {
     }
 
     private RateLimitResult acquireMutation(WindowState state, long nowNanos, int permits) {
-        throw new UnsupportedOperationException("TODO: see the class JavaDoc for the algorithm");
+        roll(state, nowNanos);
+
+        long elapsedNanos = nowNanos - state.currentWindowStartNanos;
+        long estimate = estimate(state.previousCount, state.currentCount, elapsedNanos);
+
+        // Written as a subtraction rather than `estimate + permits <= limit`, which
+        // could overflow for a limit near the top of the long range.
+        if (estimate <= limit - permits) {
+            state.currentCount += permits;
+            return RateLimitResult.allowed(limit, limit - estimate - permits);
+        }
+        return RateLimitResult.rejected(limit, Duration.ofNanos(
+                nanosUntilFits(state.previousCount, state.currentCount, elapsedNanos, permits)));
     }
 
+    /**
+     * The same decision, computed into local variables so the state is left exactly
+     * as it was found.
+     */
     private RateLimitResult peekMutation(WindowState state, long nowNanos, int permits) {
-        throw new UnsupportedOperationException("TODO: see the class JavaDoc for the algorithm");
+        long windowStart = projectedWindowStart(state, nowNanos);
+        long windowsPassed = (windowStart - state.currentWindowStartNanos) / windowNanos;
+
+        // The counters a roll would have left behind, without performing the roll.
+        long previousCount;
+        long currentCount;
+        if (windowsPassed == 0) {
+            previousCount = state.previousCount;
+            currentCount = state.currentCount;
+        } else {
+            previousCount = (windowsPassed == 1) ? state.currentCount : 0L;
+            currentCount = 0L;
+        }
+
+        long elapsedNanos = nowNanos - windowStart;
+        long estimate = estimate(previousCount, currentCount, elapsedNanos);
+
+        if (estimate <= limit - permits) {
+            return RateLimitResult.allowed(limit, limit - estimate - permits);
+        }
+        return RateLimitResult.rejected(limit, Duration.ofNanos(
+                nanosUntilFits(previousCount, currentCount, elapsedNanos, permits)));
+    }
+
+    /** Rotates the counters if the clock has crossed into a later window. */
+    private void roll(WindowState state, long nowNanos) {
+        long newStart = projectedWindowStart(state, nowNanos);
+        if (newStart == state.currentWindowStartNanos) {
+            return;
+        }
+        long windowsPassed = (newStart - state.currentWindowStartNanos) / windowNanos;
+        // Carried only when exactly one window elapsed. If two or more did, the
+        // window immediately behind us saw no traffic and must not be weighted in.
+        state.previousCount = (windowsPassed == 1) ? state.currentCount : 0L;
+        state.currentCount = 0L;
+        state.currentWindowStartNanos = newStart;
+    }
+
+    /**
+     * Where the current window starts. Advances by whole multiples so boundaries sit
+     * on a fixed grid rather than drifting with call timing.
+     */
+    private long projectedWindowStart(WindowState state, long nowNanos) {
+        long elapsed = nowNanos - state.currentWindowStartNanos;
+        if (elapsed < windowNanos) {
+            return state.currentWindowStartNanos;
+        }
+        return state.currentWindowStartNanos + (elapsed / windowNanos) * windowNanos;
+    }
+
+    /** {@code previousCount * (1 - elapsed/window) + currentCount}, in integers. */
+    private long estimate(long previousCount, long currentCount, long elapsedNanos) {
+        return carriedOver(previousCount, elapsedNanos) + currentCount;
+    }
+
+    /**
+     * The previous window's share, decaying linearly to zero as the current window
+     * fills. This is the approximation: it assumes those requests were spread evenly
+     * across the window, so the estimate can err in either direction, bounded by
+     * {@code previousCount}.
+     */
+    private long carriedOver(long previousCount, long elapsedNanos) {
+        if (previousCount <= 0) {
+            return 0L;
+        }
+        long remainingWeightNanos = windowNanos - elapsedNanos;
+        if (remainingWeightNanos <= 0) {
+            return 0L;
+        }
+        // Rounded up, not down. Rounding down would shave a fraction off the carried
+        // count and let a request through fractionally before the reported retry
+        // delay had elapsed, breaking the promise that waiting exactly that long is
+        // what it takes. Erring high also keeps the estimate on the strict side.
+        return mulDivCeil(previousCount, remainingWeightNanos, windowNanos);
+    }
+
+    /**
+     * How long until enough of the previous window ages out for the request to fit.
+     *
+     * <p>Solved directly rather than by stepping: the carried share falls linearly,
+     * so the instant it crosses the threshold is arithmetic. Never longer than the
+     * time to the next roll, after which the previous count is gone entirely.
+     */
+    private long nanosUntilFits(long previousCount, long currentCount, long elapsedNanos, int permits) {
+        long untilRollNanos = windowNanos - elapsedNanos;
+        long headroom = limit - currentCount - permits;
+
+        // Nothing left to decay, or this window's own count already breaches the
+        // limit: only the roll can help.
+        if (previousCount <= 0 || headroom < 0) {
+            return untilRollNanos;
+        }
+        if (headroom >= previousCount) {
+            return 0L; // the whole previous window could stay and it would still fit
+        }
+        // Need previousCount * (windowNanos - e) / windowNanos <= headroom.
+        long tolerableWeightNanos = mulDiv(headroom, windowNanos, previousCount);
+        long neededElapsedNanos = windowNanos - tolerableWeightNanos;
+        return Math.min(untilRollNanos, Math.max(0L, neededElapsedNanos - elapsedNanos));
+    }
+
+    /**
+     * {@code a * b / c} where the result always fits in a {@code long} but the
+     * product may not — a large limit over a long window overflows readily.
+     * Deliberately not floating point, which would reintroduce the drift this
+     * library avoids everywhere else; the wide path allocates only in the rare case.
+     */
+    private static long mulDiv(long a, long b, long c) {
+        try {
+            return Math.multiplyExact(a, b) / c;
+        } catch (ArithmeticException overflow) {
+            return BigInteger.valueOf(a)
+                    .multiply(BigInteger.valueOf(b))
+                    .divide(BigInteger.valueOf(c))
+                    .longValueExact();
+        }
+    }
+
+    /**
+     * {@link #mulDiv} rounded up. All three operands are non-negative here, so this
+     * is a plain "add one unless it divided evenly" rather than the sign-aware form
+     * {@code Math.ceilDiv} would give — and that method needs Java 18, above this
+     * library's floor.
+     */
+    private static long mulDivCeil(long a, long b, long c) {
+        try {
+            long product = Math.multiplyExact(a, b);
+            long quotient = product / c;
+            return (product % c == 0) ? quotient : quotient + 1;
+        } catch (ArithmeticException overflow) {
+            BigInteger[] quotientAndRemainder = BigInteger.valueOf(a)
+                    .multiply(BigInteger.valueOf(b))
+                    .divideAndRemainder(BigInteger.valueOf(c));
+            long quotient = quotientAndRemainder[0].longValueExact();
+            return quotientAndRemainder[1].signum() == 0 ? quotient : quotient + 1;
+        }
     }
 }

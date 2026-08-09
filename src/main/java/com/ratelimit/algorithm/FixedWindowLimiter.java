@@ -82,10 +82,71 @@ final class FixedWindowLimiter extends AbstractRateLimiter {
     }
 
     private RateLimitResult acquireMutation(WindowState state, long nowNanos, int permits) {
-        throw new UnsupportedOperationException("TODO: see the class JavaDoc for the algorithm");
+        roll(state, nowNanos);
+
+        if (state.currentCount + permits <= limit) {
+            state.currentCount += permits;
+            return RateLimitResult.allowed(limit, limit - state.currentCount);
+        }
+        return RateLimitResult.rejected(limit,
+                Duration.ofNanos(nanosUntilRoll(state.currentWindowStartNanos, nowNanos)));
     }
 
+    /**
+     * The same decision, computed into local variables so the state is left exactly
+     * as it was found.
+     */
     private RateLimitResult peekMutation(WindowState state, long nowNanos, int permits) {
-        throw new UnsupportedOperationException("TODO: see the class JavaDoc for the algorithm");
+        long windowStart = projectedWindowStart(state, nowNanos);
+        // A rolled window would have zeroed the counter; anything else keeps it.
+        long count = (windowStart == state.currentWindowStartNanos) ? state.currentCount : 0L;
+
+        if (count + permits <= limit) {
+            return RateLimitResult.allowed(limit, limit - count - permits);
+        }
+        return RateLimitResult.rejected(limit,
+                Duration.ofNanos(nanosUntilRoll(windowStart, nowNanos)));
+    }
+
+    /** Zeroes the counter if the clock has crossed into a later window. */
+    private void roll(WindowState state, long nowNanos) {
+        long newStart = projectedWindowStart(state, nowNanos);
+        if (newStart == state.currentWindowStartNanos) {
+            return;
+        }
+        long windowsPassed = (newStart - state.currentWindowStartNanos) / windowNanos;
+        // Only the window immediately behind us has a count worth carrying; if two or
+        // more elapsed, the previous one saw no traffic at all. Unused here, but the
+        // sliding window counter shares this state and blends the two.
+        state.previousCount = (windowsPassed == 1) ? state.currentCount : 0L;
+        state.currentCount = 0L;
+        state.currentWindowStartNanos = newStart;
+    }
+
+    /**
+     * Where the current window starts, given the time, without touching the state.
+     *
+     * <p>Advances by whole multiples of the window rather than snapping to
+     * {@code nowNanos}: anchoring to call timing would stretch each window by
+     * however late its first caller happened to be, and the boundaries would drift.
+     */
+    private long projectedWindowStart(WindowState state, long nowNanos) {
+        long elapsed = nowNanos - state.currentWindowStartNanos;
+        if (elapsed < windowNanos) {
+            return state.currentWindowStartNanos;
+        }
+        return state.currentWindowStartNanos + (elapsed / windowNanos) * windowNanos;
+    }
+
+    /**
+     * Time left in the window starting at {@code windowStartNanos}. Computed as a
+     * remainder rather than as {@code start + windowNanos - now}, so a window start
+     * near the top of the {@code long} range cannot overflow the addition.
+     *
+     * <p>Takes the start as a parameter rather than reading it from the state, so
+     * that {@code peek} can pass a projected start it has not written back.
+     */
+    private long nanosUntilRoll(long windowStartNanos, long nowNanos) {
+        return windowNanos - (nowNanos - windowStartNanos);
     }
 }

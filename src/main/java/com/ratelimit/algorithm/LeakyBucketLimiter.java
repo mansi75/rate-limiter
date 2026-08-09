@@ -2,7 +2,7 @@ package com.ratelimit.algorithm;
 
 import com.ratelimit.RateLimitResult;
 import com.ratelimit.listener.RateLimitListener;
-import com.ratelimit.state.BucketState;
+import com.ratelimit.state.QueueState;
 import com.ratelimit.store.LimiterStore;
 import com.ratelimit.store.StateMutation;
 import com.ratelimit.time.TimeSource;
@@ -27,11 +27,10 @@ import java.util.function.LongFunction;
  *
  * <h2>Implementation notes</h2>
  *
- * <p>Reuses {@link BucketState}, but the meaning of the field inverts:
- * {@code availableNanos} tracks how full the bucket is rather than how much
- * credit is banked. Consider renaming the field or introducing a dedicated state
- * type if that inversion reads as confusing; a shared type that means two things
- * is worse than two small types.
+ * <p>State is {@link QueueState}, not the token bucket's {@code BucketState}, even
+ * though the two hold the same shape. The sign is inverted — {@code fillNanos} is
+ * backlog owed rather than credit banked — and one field meaning both reads as a
+ * bug at every call site.
  *
  * <p>The mutation is:
  * <ol>
@@ -48,9 +47,9 @@ final class LeakyBucketLimiter extends AbstractRateLimiter {
     private final long nanosPerPermit;
     private final long capacityNanos;
 
-    private final StateMutation<BucketState> acquireMutation = this::acquireMutation;
-    private final StateMutation<BucketState> peekMutation = this::peekMutation;
-    private final LongFunction<BucketState> stateFactory = now -> new BucketState(0L, now);
+    private final StateMutation<QueueState> acquireMutation = this::acquireMutation;
+    private final StateMutation<QueueState> peekMutation = this::peekMutation;
+    private final LongFunction<QueueState> stateFactory = QueueState::new;
 
     LeakyBucketLimiter(
             long capacity,
@@ -81,11 +80,58 @@ final class LeakyBucketLimiter extends AbstractRateLimiter {
         return store.compute(key, stateFactory, peekMutation, nowNanos, permits);
     }
 
-    private RateLimitResult acquireMutation(BucketState state, long nowNanos, int permits) {
-        throw new UnsupportedOperationException("TODO: see the class JavaDoc for the algorithm");
+    private RateLimitResult acquireMutation(QueueState state, long nowNanos, int permits) {
+        drain(state, nowNanos);
+
+        long costNanos = permits * nanosPerPermit;
+        long headroomNanos = capacityNanos - state.fillNanos;
+
+        if (costNanos <= headroomNanos) {
+            state.fillNanos += costNanos;
+            return RateLimitResult.allowed(capacity, (headroomNanos - costNanos) / nanosPerPermit);
+        }
+        // The bucket drains a nanosecond of fill per nanosecond of real time, so the
+        // shortfall in room is itself the wait.
+        return RateLimitResult.rejected(capacity, Duration.ofNanos(costNanos - headroomNanos));
     }
 
-    private RateLimitResult peekMutation(BucketState state, long nowNanos, int permits) {
-        throw new UnsupportedOperationException("TODO: see the class JavaDoc for the algorithm");
+    /**
+     * The same decision, computed into local variables so the state is left exactly
+     * as it was found.
+     */
+    private RateLimitResult peekMutation(QueueState state, long nowNanos, int permits) {
+        long fillNanos = projectedFillNanos(state, nowNanos);
+
+        long costNanos = permits * nanosPerPermit;
+        long headroomNanos = capacityNanos - fillNanos;
+
+        if (costNanos <= headroomNanos) {
+            return RateLimitResult.allowed(capacity, (headroomNanos - costNanos) / nanosPerPermit);
+        }
+        return RateLimitResult.rejected(capacity, Duration.ofNanos(costNanos - headroomNanos));
+    }
+
+    /** Lets the bucket leak for the time that has passed, then marks the clock. */
+    private void drain(QueueState state, long nowNanos) {
+        state.fillNanos = projectedFillNanos(state, nowNanos);
+        state.lastDrainNanos = nowNanos;
+    }
+
+    /**
+     * How full the bucket is now, without touching the state.
+     *
+     * <p>Draining is the mirror of the token bucket's refill: one nanosecond of fill
+     * leaves per nanosecond of real time, so the leak rate never appears in the
+     * arithmetic. It is carried entirely by {@code nanosPerPermit}, the cost of
+     * putting one request in.
+     */
+    private long projectedFillNanos(QueueState state, long nowNanos) {
+        long elapsed = nowNanos - state.lastDrainNanos;
+        if (elapsed <= 0) {
+            return state.fillNanos;
+        }
+        // Compared rather than subtracted-then-clamped: the bucket cannot leak past
+        // empty, and the comparison also keeps a long-idle key from underflowing.
+        return (elapsed >= state.fillNanos) ? 0L : state.fillNanos - elapsed;
     }
 }

@@ -1,7 +1,11 @@
 package com.ratelimit.state;
 
 /**
- * State for the token and leaky bucket algorithms.
+ * State for the token bucket algorithm.
+ *
+ * <p>The leaky bucket has its own {@link QueueState} rather than sharing this one:
+ * the two hold the same shape, but this field is credit banked and that one is
+ * backlog owed.
  *
  * <p>Tokens are not stored as a count. They are stored as {@code availableNanos},
  * the amount of refill time banked so far, where one permit costs a fixed number
