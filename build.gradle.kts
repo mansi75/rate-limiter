@@ -1,3 +1,7 @@
+import org.gradle.api.credentials.HttpHeaderCredentials
+import org.gradle.authentication.http.HttpHeaderAuthentication
+import java.util.Base64
+
 plugins {
     `java-library`
     `maven-publish`
@@ -51,6 +55,19 @@ tasks.test {
     }
 }
 
+// Declared ahead of every use. Top-level `val`s in a Kotlin build script initialise
+// in source order, so reading one from a block above its declaration yields null —
+// which silently produced empty credentials and a 401 from Sonatype.
+val centralUsername: String? =
+    providers.gradleProperty("centralUsername").orNull ?: System.getenv("CENTRAL_USERNAME")
+val centralPassword: String? =
+    providers.gradleProperty("centralPassword").orNull ?: System.getenv("CENTRAL_PASSWORD")
+
+val signingKey: String? =
+    providers.gradleProperty("signingKey").orNull ?: System.getenv("SIGNING_KEY")
+val signingPassword: String? =
+    providers.gradleProperty("signingPassword").orNull ?: System.getenv("SIGNING_PASSWORD")
+
 publishing {
     publications {
         create<MavenPublication>("maven") {
@@ -88,29 +105,25 @@ publishing {
         maven {
             name = "central"
             url = uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
-            credentials {
-                // Defaulted to empty rather than left null: Gradle validates these
-                // eagerly and would fail with "property doesn't have a configured
-                // value", burying the actionable message in the doFirst check below.
-                username = centralUsername ?: ""
-                password = centralPassword ?: ""
+
+            // Sonatype's OSSRH Staging API expects `Authorization: Bearer <base64 of
+            // user:pass>`. Gradle's `credentials { username; password }` sends Basic
+            // auth instead, which this endpoint answers with 401 — so the header is
+            // built by hand. Base64 here is an encoding, not a secret: the token is
+            // what must stay out of the repository.
+            credentials(HttpHeaderCredentials::class) {
+                name = "Authorization"
+                val token = Base64.getEncoder()
+                    .encodeToString("${centralUsername.orEmpty()}:${centralPassword.orEmpty()}"
+                        .toByteArray(Charsets.UTF_8))
+                value = "Bearer $token"
+            }
+            authentication {
+                create<HttpHeaderAuthentication>("header")
             }
         }
     }
 }
-
-// Credentials and the signing key come from the environment in CI and from
-// ~/.gradle/gradle.properties locally. Read as providers rather than at
-// configuration time so an absent value is null instead of a build failure.
-val centralUsername: String? =
-    providers.gradleProperty("centralUsername").orNull ?: System.getenv("CENTRAL_USERNAME")
-val centralPassword: String? =
-    providers.gradleProperty("centralPassword").orNull ?: System.getenv("CENTRAL_PASSWORD")
-
-val signingKey: String? =
-    providers.gradleProperty("signingKey").orNull ?: System.getenv("SIGNING_KEY")
-val signingPassword: String? =
-    providers.gradleProperty("signingPassword").orNull ?: System.getenv("SIGNING_PASSWORD")
 
 signing {
     // Signing is required to publish to Central and pointless everywhere else. Wiring
