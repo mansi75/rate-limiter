@@ -86,7 +86,8 @@ dependencies {
 
 Requires Java 17 or later.
 
-Until 0.1.0 is on Maven Central, build and install it locally instead:
+Until 0.1.0 is on Maven Central, build and install it locally instead. It needs no
+credentials, no signing key and no JDK beyond 17 — the wrapper fetches its own Gradle:
 
 ```bash
 git clone https://github.com/mansi75/rate-limiter.git
@@ -94,7 +95,16 @@ cd rate-limiter
 ./gradlew publishToMavenLocal
 ```
 
-then add `mavenLocal()` to your repositories.
+then add `mavenLocal()` ahead of `mavenCentral()` in your repositories:
+
+```kotlin
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+```
+
+Releasing to Central is tag-driven; see [CONTRIBUTING](CONTRIBUTING.md#releasing).
 
 Note that the coordinates are `io.github.mansi75` while the Java package is `com.ratelimit`.
 Maven Central grants a groupId only on proof you control the matching domain, so the two

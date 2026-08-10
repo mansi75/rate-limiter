@@ -1,6 +1,7 @@
 plugins {
     `java-library`
     `maven-publish`
+    signing
 }
 
 // Deliberately not `com.ratelimit`, which is the Java package: Maven Central grants a groupId
@@ -54,6 +55,8 @@ publishing {
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
+            // Maven Central rejects a POM missing any of name, description, url,
+            // licences, developers or scm. All six are required, not merely good form.
             pom {
                 name = "rate-limiter"
                 description = "Six rate limiting algorithms behind one interface, " +
@@ -65,11 +68,70 @@ publishing {
                         url = "https://opensource.org/licenses/MIT"
                     }
                 }
+                developers {
+                    developer {
+                        id = "mansi75"
+                        name = "Mansi Maurya"
+                        url = "https://github.com/mansi75"
+                    }
+                }
                 scm {
                     url = "https://github.com/mansi75/rate-limiter"
                     connection = "scm:git:https://github.com/mansi75/rate-limiter.git"
+                    developerConnection = "scm:git:ssh://git@github.com/mansi75/rate-limiter.git"
                 }
             }
+        }
+    }
+
+    repositories {
+        maven {
+            name = "central"
+            url = uri("https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/")
+            credentials {
+                // Defaulted to empty rather than left null: Gradle validates these
+                // eagerly and would fail with "property doesn't have a configured
+                // value", burying the actionable message in the doFirst check below.
+                username = centralUsername ?: ""
+                password = centralPassword ?: ""
+            }
+        }
+    }
+}
+
+// Credentials and the signing key come from the environment in CI and from
+// ~/.gradle/gradle.properties locally. Read as providers rather than at
+// configuration time so an absent value is null instead of a build failure.
+val centralUsername: String? =
+    providers.gradleProperty("centralUsername").orNull ?: System.getenv("CENTRAL_USERNAME")
+val centralPassword: String? =
+    providers.gradleProperty("centralPassword").orNull ?: System.getenv("CENTRAL_PASSWORD")
+
+val signingKey: String? =
+    providers.gradleProperty("signingKey").orNull ?: System.getenv("SIGNING_KEY")
+val signingPassword: String? =
+    providers.gradleProperty("signingPassword").orNull ?: System.getenv("SIGNING_PASSWORD")
+
+signing {
+    // Signing is required to publish to Central and pointless everywhere else. Wiring
+    // it only when a key is present keeps `build` and `publishToMavenLocal` working on
+    // a machine with no GPG setup, which is every contributor's machine.
+    if (signingKey != null) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
+        sign(publishing.publications["maven"])
+    }
+}
+
+tasks.withType<PublishToMavenRepository>().configureEach {
+    doFirst {
+        require(centralUsername != null && centralPassword != null) {
+            "Publishing to Central needs credentials. Set CENTRAL_USERNAME and " +
+                "CENTRAL_PASSWORD, or centralUsername/centralPassword in " +
+                "~/.gradle/gradle.properties. Use publishToMavenLocal for local testing."
+        }
+        require(signingKey != null) {
+            "Publishing to Central needs a GPG signature. Set SIGNING_KEY to an " +
+                "ASCII-armoured private key and SIGNING_PASSWORD to its passphrase."
         }
     }
 }

@@ -62,6 +62,52 @@ Before pushing:
 ./gradlew build
 ```
 
+## Releasing
+
+Publishing is tag-driven: pushing `v0.1.0` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds, tests, signs and uploads. Nothing publishes from a plain push to `master`, because a version once on Maven Central can never be replaced — only superseded by a higher one.
+
+### One-time setup
+
+Four repository secrets are needed:
+
+| Secret | Where it comes from |
+| --- | --- |
+| `CENTRAL_USERNAME` | Sonatype Central Portal → Account → Generate User Token |
+| `CENTRAL_PASSWORD` | the token's password half |
+| `SIGNING_KEY` | `gpg --armor --export-secret-keys <KEY_ID>` — the whole block, `BEGIN` line included |
+| `SIGNING_PASSWORD` | that key's passphrase |
+
+You also need the `io.github.mansi75` namespace verified in the Central Portal, which is granted on proof you control the matching GitHub account.
+
+The public half of the signing key must be on a keyserver, or Central rejects the upload:
+
+```bash
+gpg --keyserver keyserver.ubuntu.com --send-keys <KEY_ID>
+```
+
+### Cutting a release
+
+1. Move the `Unreleased` entries in `CHANGELOG.md` under the new version, and add the link at the bottom.
+2. Set `version` in `build.gradle.kts`. It has no `-SNAPSHOT` suffix; Central takes releases only.
+3. Commit, tag, push:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+4. Approve the deployment in the Central Portal. Uploads land in a staging area first and are not public until released.
+
+### Testing the publish without publishing
+
+```bash
+./gradlew publishToMavenLocal
+```
+
+Installs to `~/.m2/repository/io/github/mansi75/rate-limiter/`, needs no credentials and no GPG key, and is what to point a scratch project at while checking the artifact is usable. Add `mavenLocal()` to that project's repositories.
+
+Signing is wired only when `SIGNING_KEY` is present, so `build` and `publishToMavenLocal` work on a machine with no GPG setup at all.
+
 ## Reporting bugs
 
 Open an issue with the algorithm, the configuration, and a failing case if you have one. A `MutableTimeSource`-based reproduction is the fastest possible route to a fix.
